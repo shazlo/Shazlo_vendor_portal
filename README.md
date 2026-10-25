@@ -36,15 +36,18 @@ The new folders are placeholders until their phase starts; see the roadmap.
 
 ## Local development
 
-Postgres 16 runs in docker-compose:
+Postgres 16, Redis 7 and identity-api run in docker-compose:
 
 ```bash
 cp .env.example .env        # then set POSTGRES_PASSWORD
-docker compose up -d
-docker compose ps           # postgres should report "healthy"
+docker compose up -d --build
+docker compose ps           # postgres, redis and identity-api should report "healthy"
+curl localhost:8001/ready   # {"status":"ok", ...}
 ```
 
 On first start it creates one database per service plus a test database for each: `identity`, `identity_test`, `vendor`, `vendor_test`. Connection string pattern: `postgresql://<user>:<password>@localhost:5432/<db>`.
+
+Redis holds identity-api's refresh tokens (admin sessions) and rate-limit counters. It runs with AOF persistence (`appendfsync everysec`) and a named volume, so a restart or redeploy does not sign admins out. Locally it is published on `127.0.0.1` only and has no password. In production use a managed Redis, or one with persistence enabled, with a password and no public port.
 
 The init script runs only when the data volume is created. To recreate the databases: `docker compose down -v && docker compose up -d` (this deletes all local data).
 

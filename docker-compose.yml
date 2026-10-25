@@ -17,5 +17,39 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # AOF so refresh tokens (sessions) survive a restart; `everysec` risks at most ~1s of writes.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      # Local only: this Redis has no password.
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  identity-api:
+    build: ./services/identity-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENV: dev
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shazlo}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/identity
+      REDIS_URL: redis://redis:6379/0
+      CORS_ALLOWED_ORIGINS: ${IDENTITY_CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+      JWT_ISSUER: http://localhost:${IDENTITY_API_PORT:-8001}
+    ports:
+      - "${IDENTITY_API_PORT:-8001}:8001"
+
 volumes:
   postgres-data:
+  redis-data:
