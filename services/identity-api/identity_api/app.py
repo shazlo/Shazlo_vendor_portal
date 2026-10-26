@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +10,13 @@ from identity_api.core.errors import register_exception_handlers
 from identity_api.core.logging import configure_logging
 from identity_api.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from identity_api.core.settings import Settings, get_settings
+from identity_api.db.session import create_engine, create_sessionmaker
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    await app.state.engine.dispose()
 
 
 def create_app(
@@ -24,8 +34,12 @@ def create_app(
         docs_url="/docs" if docs_enabled else None,
         redoc_url=None,
         openapi_url="/openapi.json" if docs_enabled else None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
+    # The engine connects lazily, so creating the app does not need a reachable database.
+    app.state.engine = create_engine(settings.database_url)
+    app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.readiness_checks = (
         readiness_checks
         if readiness_checks is not None

@@ -9,6 +9,9 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN useradd --system --uid 10001 --no-create-home app
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+WORKDIR /app
+# Lets `alembic upgrade head` run in the container; migrations ship inside the package.
+COPY alembic.ini ./
 USER app
 EXPOSE 8001
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \

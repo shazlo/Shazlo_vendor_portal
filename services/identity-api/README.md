@@ -24,7 +24,8 @@ identity_api/
   main.py       `app = create_app()` for uvicorn
   api/          routers (health now; auth and admins later)
   core/         settings, JSON logging, request-ID middleware, error handlers
-  db/           models and sessions (async SQLAlchemy 2, added with the schema)
+  db/           models, declarative base (constraint naming convention), async engine and sessions
+  migrations/   Alembic env and versions (runs on a sync psycopg engine)
   services/     business logic, free of HTTP concerns
 ```
 
@@ -44,6 +45,27 @@ Read from the environment (and `.env`). Names are the upper-case field names. Fu
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | |
 | `REFRESH_TOKEN_TTL_DAYS` / `REFRESH_FAMILY_MAX_DAYS` | `7` / `30` | |
 
+## Database
+
+Async SQLAlchemy 2 with `asyncpg` for the app; Alembic runs on a sync engine (psycopg 3). `DATABASE_URL` may use `postgresql://`, `postgresql+asyncpg://` or `postgresql+psycopg://`: each side picks its own driver.
+
+| Table | Notes |
+|---|---|
+| `admins` | UUID `id`; `email` unique and stored lower-cased (a check constraint enforces it, so uniqueness is case-insensitive in the DB); `password_hash`, `display_name`, `is_active`, `must_change_password` (default true), `created_at`, `updated_at`, `last_login_at` |
+| `roles` | `name` primary key (`super_admin`, `vendor_reviewer`, later `<area>_<role>`), `description` |
+| `admin_roles` | many to many; deleting an admin removes its links, a role still assigned cannot be deleted |
+
+Migration `0001` seeds the `super_admin` and `vendor_reviewer` roles. Refresh tokens live in Redis (ADR 0009), so there is no token table.
+
+```sh
+alembic upgrade head                 # uses DATABASE_URL (or .env)
+alembic downgrade base
+alembic revision --autogenerate -m "<message>"   # then review the generated file
+alembic check                        # fails if models and migrations differ
+```
+
+In a container: `docker compose exec identity-api alembic upgrade head`.
+
 ## Behaviour worth knowing
 
 - `GET /health` is liveness only. `GET /ready` checks Postgres and Redis (2 second timeout each) and returns 503 if either fails.
@@ -56,6 +78,14 @@ Read from the environment (and `.env`). Names are the upper-case field names. Fu
 ```sh
 ruff check . && ruff format --check . && mypy && pytest
 ```
+
+Database tests run against real Postgres from `DATABASE_URL` and are skipped when it is unset (CI sets it). Locally, point it at the `identity_test` database from the root docker-compose:
+
+```sh
+DATABASE_URL=postgresql://shazlo:<password>@localhost:5432/identity_test pytest
+```
+
+The suite drops and recreates the schema (`alembic downgrade base` then `upgrade head`) and refuses any database whose name does not contain `test`. Each test runs in a transaction that is rolled back, so tests share no rows.
 
 ## Docker
 
