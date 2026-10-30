@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest", "pytest-asyncio>=0.24", "httpx>=0.28"]
+dev = ["ruff", "mypy", "pytest", "pytest-asyncio>=0.24", "httpx>=0.28", "fakeredis>=2.26"]
 
 [tool.setuptools.packages.find]
 include = ["identity_api*"]

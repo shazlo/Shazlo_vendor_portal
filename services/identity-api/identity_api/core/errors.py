@@ -33,7 +33,28 @@ def error_response(
     return response
 
 
+class ApiError(Exception):
+    """An expected failure with its own error code, e.g. `invalid_credentials`."""
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.headers = headers
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ApiError)
+    async def api_error(request: Request, exc: ApiError) -> JSONResponse:
+        return error_response(request, exc.status_code, exc.code, exc.message, headers=exc.headers)
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         phrase = HTTPStatus(exc.status_code).phrase

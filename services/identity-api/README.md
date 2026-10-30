@@ -77,6 +77,21 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 - Keys are RSA 2048-bit or larger. A key that is only published (not signing) may be configured as a public PEM.
 - Rotation is a configuration change; follow [the runbook](../../docs/runbooks/jwt-key-rotation.md).
 
+## Auth endpoints
+
+| Endpoint | Notes |
+|---|---|
+| `POST /v1/auth/login` | `{email, password}` returns `{access_token, token_type, expires_in, must_change_password, admin}` and sets the refresh cookie. Unknown email, wrong password and inactive admin all give the same `401 invalid_credentials`. |
+| `POST /v1/auth/refresh` | Reads the cookie, rotates it and returns the same body as login. A token that was already used revokes its whole family. A rejected token is answered with `401` and the cookie is cleared. |
+| `POST /v1/auth/logout` | Revokes the cookie's family and clears the cookie. Always `204`. |
+| `POST /v1/auth/change-password` | Bearer token plus `{current_password, new_password}`. Ends every refresh family of the admin and starts a new session (new cookie and token). |
+
+- **Refresh tokens** are 256-bit random values. They exist only in the `HttpOnly` cookie (`Secure` and `SameSite` from settings, path `/v1/auth`); never in a body or a log. Redis holds only their SHA-256 hash (`rt:<hash>`) plus the family (`rf:<id>`, hard limit 30 days) and the admin's family set (`ra:<admin>`). A token lives 7 days and never outlives its family.
+- **First login:** an admin with `must_change_password` gets an access token with **no roles** and a `must_change_password` claim. Services grant it nothing, and identity-api's own `current_admin` dependency answers `403 password_change_required`. Only `change-password` accepts it. The new token returned by `change-password` is a normal one.
+- `api/deps.py` has the dependencies later endpoints use: `current_admin` (active admin, password already changed) and `current_admin_pending_password`.
+- Concurrent refreshes with the same token (two tabs at once) count as reuse and end the session; the shell must refresh from one place (ADR 0009).
+- Rate limiting is a separate issue (#53).
+
 ## Behaviour worth knowing
 
 - `GET /health` is liveness only. `GET /ready` checks Postgres and Redis (2 second timeout each) and returns 503 if either fails.

@@ -42,6 +42,7 @@ class KeyRing:
         if signing.kid not in public_keys:
             raise KeyConfigError(f"signing key {signing.kid!r} is not in the key ring")
         self.signing = signing
+        self.public_keys = dict(public_keys)
         self.kids = tuple(public_keys)
         # Built from public keys only, so private parameters cannot reach the document.
         self._jwks: dict[str, Any] = {
