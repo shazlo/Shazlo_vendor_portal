@@ -2,10 +2,19 @@
 name = "identity-api"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "pydantic-settings>=2.7",
+    "asyncpg>=0.30",
+    "redis>=5.2",
+]
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest"]
+dev = ["ruff", "mypy", "pytest", "httpx>=0.28"]
+
+[tool.setuptools.packages.find]
+include = ["identity_api*"]
 
 [tool.ruff]
 extend = "../ruff.toml"
@@ -13,6 +22,11 @@ extend = "../ruff.toml"
 [tool.mypy]
 strict = true
 files = ["identity_api", "tests"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
