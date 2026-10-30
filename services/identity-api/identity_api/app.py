@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
 from identity_api import __version__
-from identity_api.api import auth, health, jwks
+from identity_api.api import auth, health, jwks, me
 from identity_api.core.errors import register_exception_handlers
 from identity_api.core.logging import configure_logging
 from identity_api.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
@@ -82,5 +82,6 @@ def create_app(
     app.include_router(jwks.router)
     v1 = APIRouter(prefix="/v1")
     v1.include_router(auth.router)
+    v1.include_router(me.router)
     app.include_router(v1)  # feature routers are added here
     return app

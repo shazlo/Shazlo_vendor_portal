@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     jwt_keys_dir: str | None = None
     jwt_keys: SecretStr | None = None
     jwt_signing_kid: str | None = None
+    # Which roles may get a token for which service (ADR 0009), as JSON in the environment.
+    # An admin gets a token for a service if at least one of their roles is listed for it.
+    # Adding a service is a settings change only.
+    audience_roles: dict[str, list[str]] = {
+        "identity-api": ["super_admin", "vendor_reviewer"],
+        "vendor-api": ["super_admin", "vendor_reviewer"],
+    }
     access_token_ttl_seconds: int = 15 * 60
     refresh_token_ttl_days: int = 7
     refresh_family_max_days: int = 30
@@ -51,6 +58,15 @@ class Settings(BaseSettings):
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("audience_roles")
+    @classmethod
+    def _check_audience_roles(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        if "identity-api" not in value:
+            raise ValueError("must include identity-api, the audience of the shell's own token")
+        if any(not audience or not roles for audience, roles in value.items()):
+            raise ValueError("every audience needs a name and at least one role")
         return value
 
     @field_validator("database_url")

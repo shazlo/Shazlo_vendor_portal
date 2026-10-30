@@ -97,6 +97,20 @@ class AuthService:
         await self._refresh_tokens.revoke_all(admin.id)
         return await self._start_session(admin)
 
+    def exchange_token(self, admin: Admin, audience: str) -> IssuedToken:
+        """A token for exactly one other service, if one of the admin's roles is allowed there.
+
+        Roles are read from the database, not from the token that asked, so a change of roles
+        applies at once to new exchanges.
+        """
+        allowed = self._settings.audience_roles.get(audience)
+        if allowed is None:
+            raise ApiError(400, "unknown_audience", "Unknown audience")
+        roles = [role.name for role in admin.roles]
+        if not set(roles) & set(allowed):
+            raise ApiError(403, "audience_not_allowed", "Your roles do not allow this audience")
+        return self._issuer.issue(subject=admin.id, roles=roles, audience=audience)
+
     async def _start_session(self, admin: Admin) -> AuthSession:
         refresh = await self._refresh_tokens.start_family(admin.id)
         return AuthSession(admin, self._access_token(admin), refresh)

@@ -45,6 +45,7 @@ Read from the environment (and `.env`). Names are the upper-case field names. Fu
 | `COOKIE_SECURE` / `COOKIE_SAMESITE` / `COOKIE_DOMAIN` | `true` / `strict` / unset | refresh-token cookie |
 | `JWT_ISSUER` | `http://localhost:8001` | `iss` claim |
 | `JWT_KEYS_DIR` / `JWT_KEYS` | none (one is required) | RS256 keys: a directory of `<kid>.pem` files and/or JSON `{"<kid>": "<PEM>"}`; the app refuses to start without a key |
+| `AUDIENCE_ROLES` | `identity-api` and `vendor-api` for `super_admin` and `vendor_reviewer` | JSON `{"<service>": ["<role>", ...]}`; see Auth endpoints |
 | `JWT_SIGNING_KID` | the only key, if there is just one | which key signs; the others are published in the JWKS only |
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | |
 | `REFRESH_TOKEN_TTL_DAYS` / `REFRESH_FAMILY_MAX_DAYS` | `7` / `30` | |
@@ -84,10 +85,13 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 | `POST /v1/auth/login` | `{email, password}` returns `{access_token, token_type, expires_in, must_change_password, admin}` and sets the refresh cookie. Unknown email, wrong password and inactive admin all give the same `401 invalid_credentials`. |
 | `POST /v1/auth/refresh` | Reads the cookie, rotates it and returns the same body as login. A token that was already used revokes its whole family. A rejected token is answered with `401` and the cookie is cleared. |
 | `POST /v1/auth/logout` | Revokes the cookie's family and clears the cookie. Always `204`. |
+| `POST /v1/auth/token` | Bearer identity-api token plus `{"audience": "<service>"}`. Returns a 15-minute token for that one service (`{access_token, token_type, expires_in, audience}`), no refresh token. `400 unknown_audience` if the service is not in `AUDIENCE_ROLES`, `403 audience_not_allowed` if none of the admin's roles is listed for it. |
+| `GET /v1/me` | The signed-in admin: id, email, display name, roles, `must_change_password`. Never hashes or tokens. |
 | `POST /v1/auth/change-password` | Bearer token plus `{current_password, new_password}`. Ends every refresh family of the admin and starts a new session (new cookie and token). |
 
 - **Refresh tokens** are 256-bit random values. They exist only in the `HttpOnly` cookie (`Secure` and `SameSite` from settings, path `/v1/auth`); never in a body or a log. Redis holds only their SHA-256 hash (`rt:<hash>`) plus the family (`rf:<id>`, hard limit 30 days) and the admin's family set (`ra:<admin>`). A token lives 7 days and never outlives its family.
 - **First login:** an admin with `must_change_password` gets an access token with **no roles** and a `must_change_password` claim. Services grant it nothing, and identity-api's own `current_admin` dependency answers `403 password_change_required`. Only `change-password` accepts it. The new token returned by `change-password` is a normal one.
+- **Audiences:** `AUDIENCE_ROLES` (JSON in the environment) maps each service name to the roles allowed to get a token for it, and must include `identity-api`. Adding a service is a settings change only. Roles are read from the database at exchange time, and a token for another audience is rejected by identity-api's own `current_admin` dependency.
 - `api/deps.py` has the dependencies later endpoints use: `current_admin` (active admin, password already changed) and `current_admin_pending_password`.
 - Concurrent refreshes with the same token (two tabs at once) count as reuse and end the session; the shell must refresh from one place (ADR 0009).
 - Rate limiting is a separate issue (#53).
