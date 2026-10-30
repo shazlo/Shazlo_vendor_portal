@@ -6,6 +6,10 @@ node_modules/
 .env.*
 !.env.example
 
+# Private signing keys (identity-api `generate-key` writes to .keys/)
+.keys/
+*.pem
+
 # Build output
 dist/
 dist-ssr/

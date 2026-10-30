@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     cookie_domain: str | None = None
 
     jwt_issuer: str = "http://localhost:8001"
+    # RS256 keys, from a directory of `<kid>.pem` files and/or a JSON object {"<kid>": "<PEM>"}.
+    # `jwt_signing_kid` picks the key that signs; the others are only published in the JWKS.
+    jwt_keys_dir: str | None = None
+    jwt_keys: SecretStr | None = None
+    jwt_signing_kid: str | None = None
     access_token_ttl_seconds: int = 15 * 60
     refresh_token_ttl_days: int = 7
     refresh_family_max_days: int = 30

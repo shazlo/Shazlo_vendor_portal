@@ -1,4 +1,4 @@
-"""Operator commands: `python -m identity_api.cli seed`."""
+"""Operator commands: `python -m identity_api.cli seed` and `generate-key`."""
 
 import argparse
 import asyncio
@@ -6,6 +6,7 @@ import getpass
 import logging
 import os
 import sys
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from identity_api.core.settings import Settings, get_settings
 from identity_api.db.models import SUPER_ADMIN, VENDOR_REVIEWER, Admin, Role
 from identity_api.db.session import create_engine, create_sessionmaker
+from identity_api.services.keys import KeyConfigError, new_kid, write_new_key
 from identity_api.services.password_policy import PasswordPolicyError, check_password
 from identity_api.services.passwords import PasswordService
 
@@ -110,16 +112,34 @@ async def _run_seed(settings: Settings) -> None:
         print(f"Admin {email.lower()} already exists; nothing changed")
 
 
+def _generate_key(directory: Path, kid: str | None) -> None:
+    kid = kid or new_kid()
+    try:
+        path = write_new_key(directory, kid)
+    except FileExistsError as error:
+        raise SeedError(f"{directory / (kid + '.pem')} already exists") from error
+    except KeyConfigError as error:
+        raise SeedError(str(error)) from error
+    # Only the file name is printed, never the key.
+    print(f"Wrote private key {path}")
+    print(f"Set JWT_KEYS_DIR={directory} and JWT_SIGNING_KID={kid} to sign with it.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="identity_api.cli")
-    parser.add_subparsers(dest="command", required=True).add_parser(
-        "seed", help="create the default roles and the first super_admin"
-    )
-    parser.parse_args(argv)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("seed", help="create the default roles and the first super_admin")
+    keygen = commands.add_parser("generate-key", help="create an RS256 signing key for local dev")
+    keygen.add_argument("--dir", type=Path, default=Path(".keys"), help="default: ./.keys")
+    keygen.add_argument("--kid", help="key ID; default is the date plus a random suffix")
+    args = parser.parse_args(argv)
     try:
-        asyncio.run(_run_seed(get_settings()))
+        if args.command == "generate-key":
+            _generate_key(args.dir, args.kid)
+        else:
+            asyncio.run(_run_seed(get_settings()))
     except SeedError as error:
-        print(f"seed failed: {error}", file=sys.stderr)
+        print(f"{args.command} failed: {error}", file=sys.stderr)
         return 1
     return 0
 

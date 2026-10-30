@@ -5,12 +5,14 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from identity_api import __version__
-from identity_api.api import health
+from identity_api.api import health, jwks
 from identity_api.core.errors import register_exception_handlers
 from identity_api.core.logging import configure_logging
 from identity_api.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from identity_api.core.settings import Settings, get_settings
 from identity_api.db.session import create_engine, create_sessionmaker
+from identity_api.services.keys import load_keyring
+from identity_api.services.tokens import TokenIssuer
 
 
 @asynccontextmanager
@@ -40,6 +42,9 @@ def create_app(
     # The engine connects lazily, so creating the app does not need a reachable database.
     app.state.engine = create_engine(settings.database_url)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
+    # Keys are loaded now, so a missing or broken key stops the service at startup.
+    app.state.keyring = load_keyring(settings)
+    app.state.token_issuer = TokenIssuer(settings, app.state.keyring)
     app.state.readiness_checks = (
         readiness_checks
         if readiness_checks is not None
@@ -59,5 +64,6 @@ def create_app(
     register_exception_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(jwks.router)
     app.include_router(APIRouter(prefix="/v1"))  # feature routers are added here
     return app

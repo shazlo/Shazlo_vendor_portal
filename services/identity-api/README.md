@@ -14,7 +14,9 @@ cp .env.example .env      # then fill in DATABASE_URL and REDIS_URL
 uvicorn identity_api.main:app --reload --port 8001
 ```
 
-The app refuses to start if `DATABASE_URL` or `REDIS_URL` is missing. OpenAPI docs are at `/docs` unless `ENV=prod`.
+Create a signing key once with `python -m identity_api.cli generate-key` (writes `.keys/<kid>.pem`, git-ignored) and set `JWT_KEYS_DIR=.keys`.
+
+The app refuses to start if `DATABASE_URL`, `REDIS_URL` or the JWT keys are missing. OpenAPI docs are at `/docs` unless `ENV=prod`.
 
 ## Layout
 
@@ -22,7 +24,7 @@ The app refuses to start if `DATABASE_URL` or `REDIS_URL` is missing. OpenAPI do
 identity_api/
   app.py        create_app() factory (settings and readiness checks can be injected in tests)
   main.py       `app = create_app()` for uvicorn
-  api/          routers (health now; auth and admins later)
+  api/          routers (health, JWKS; auth and admins later)
   core/         settings, JSON logging, request-ID middleware, error handlers
   db/           models, declarative base (constraint naming convention), async engine and sessions
   migrations/   Alembic env and versions (runs on a sync psycopg engine)
@@ -42,6 +44,8 @@ Read from the environment (and `.env`). Names are the upper-case field names. Fu
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | comma separated; credentials allowed for these only |
 | `COOKIE_SECURE` / `COOKIE_SAMESITE` / `COOKIE_DOMAIN` | `true` / `strict` / unset | refresh-token cookie |
 | `JWT_ISSUER` | `http://localhost:8001` | `iss` claim |
+| `JWT_KEYS_DIR` / `JWT_KEYS` | none (one is required) | RS256 keys: a directory of `<kid>.pem` files and/or JSON `{"<kid>": "<PEM>"}`; the app refuses to start without a key |
+| `JWT_SIGNING_KID` | the only key, if there is just one | which key signs; the others are published in the JWKS only |
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | |
 | `REFRESH_TOKEN_TTL_DAYS` / `REFRESH_FAMILY_MAX_DAYS` | `7` / `30` | |
 
@@ -65,6 +69,13 @@ alembic check                        # fails if models and migrations differ
 ```
 
 In a container: `docker compose exec identity-api alembic upgrade head`.
+
+## Tokens and keys
+
+- `TokenIssuer` (`services/tokens.py`) signs RS256 access tokens: `iss`, `sub`, `aud` (one service), `roles`, `iat`, `exp` (15 minutes), `jti`, with the `kid` in the header. No email or name goes into the token.
+- `GET /.well-known/jwks.json` serves the public keys with `Cache-Control: max-age=600`. It is built from public keys only.
+- Keys are RSA 2048-bit or larger. A key that is only published (not signing) may be configured as a public PEM.
+- Rotation is a configuration change; follow [the runbook](../../docs/runbooks/jwt-key-rotation.md).
 
 ## Behaviour worth knowing
 

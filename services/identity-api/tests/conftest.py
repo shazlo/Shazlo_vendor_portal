@@ -1,5 +1,6 @@
+import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from sqlalchemy.pool import NullPool
 
 from identity_api.core.settings import Settings
 from identity_api.db.session import async_url
+from identity_api.services.keys import generate_private_key, private_key_pem
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 
@@ -18,14 +20,34 @@ SERVICE_DIR = Path(__file__).resolve().parents[1]
 TEST_DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
+@pytest.fixture(scope="session")
+def key_pems() -> dict[str, str]:
+    """Two generated private keys by kid. Generating RSA keys is slow, so once per run."""
+    return {
+        kid: private_key_pem(generate_private_key()).decode()
+        for kid in ("test-key-1", "test-key-2")
+    }
+
+
 @pytest.fixture
-def settings() -> Settings:
+def settings(key_pems: dict[str, str]) -> Settings:
     return Settings(
         _env_file=None,
         env="test",
+        jwt_keys=json.dumps({"test-key-1": key_pems["test-key-1"]}),
         database_url="postgresql+asyncpg://user:pw@localhost:5432/identity_test",
         redis_url="redis://localhost:6379/0",
     )
+
+
+@pytest.fixture
+def override() -> Callable[..., Settings]:
+    """A validated copy of settings with changes (`model_copy(update=)` skips validation)."""
+
+    def apply(base: Settings, **changes: object) -> Settings:
+        return Settings.model_validate({**base.model_dump(), **changes})
+
+    return apply
 
 
 @pytest.fixture(scope="session")
