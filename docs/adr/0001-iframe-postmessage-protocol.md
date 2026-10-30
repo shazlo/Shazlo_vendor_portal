@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-10-23
 - Issue: #30
-- Related: [ROADMAP](../ROADMAP.md) Phase 6 (Shazlo-One shell) and Phase 7 (vendor admin module); ADR 0002 (auth model, #31)
+- Related: [ROADMAP](../ROADMAP.md) Phase 6 (Shazlo-One shell) and Phase 7 (vendor admin module); [0009 auth model](0009-auth-model.md) (#31)
 
 ## Context
 
@@ -66,12 +66,12 @@ Messages larger than **64 KB** are dropped.
 1. The shell registers its `message` listener **before** it sets the iframe `src`, so an early `ready` is never missed.
 2. The module sends `ready` to the shell origin (`window.parent.postMessage(msg, SHELL_ORIGIN)`).
 3. The shell checks the message (section 4), picks the highest version both sides support, and answers with `auth`.
-4. The module keeps the token **in memory only** and sends it as `Authorization: Bearer` to its own API. Its API validates the token with the identity service's JWKS, as decided in ADR 0002.
+4. The module keeps the token **in memory only** and sends it as `Authorization: Bearer` to its own API. Its API validates the token with the identity service's JWKS, as decided in [ADR 0009](0009-auth-model.md).
 5. The shell refreshes the token itself and pushes a new `auth` when about **80% of the lifetime** has passed, or at least 30 seconds before expiry. The module replaces its token and keeps working.
 6. If an API call returns 401, the module sends `token:request` at most **once every 30 seconds**. The shell answers with a fresh `auth`, or signs the user out when it cannot get one.
 7. The module ignores any `auth` whose `expiresAt` is earlier than the token it already holds.
 
-The token's audience, lifetime and claims come from ADR 0002. This ADR assumes an access token with a short lifetime (about 5 minutes), an `aud` that names the module's backend, and `roles` claims. If #31 decides differently, only the `auth` payload changes.
+The token's audience, lifetime and claims come from [ADR 0009](0009-auth-model.md): an access token that lasts 15 minutes, an `aud` that names the module's backend, and `roles` claims. The shell gets each module's token from identity-api's token exchange, not by refreshing the module token itself.
 
 ### 4. Origin allow-listing
 
@@ -307,7 +307,6 @@ export function isTrustedMessage(
 
 **Follow-ups**
 - Create `packages/shell-protocol` with these types, runtime validators and a test harness (Phase 6).
-- Agree the token audience and lifetime with ADR 0002.
 - Decide where the module registry lives (shell config per environment is the proposal).
 
 ## Alternatives considered
@@ -323,6 +322,5 @@ export function isTrustedMessage(
 
 ## Open items
 
-- Exact token audience, lifetime and claims (ADR 0002, #31).
 - Whether `navigate` also needs a reverse "shell asks the module to confirm leaving" message for unsaved changes.
 - Telemetry: whether dropped messages are reported in production.

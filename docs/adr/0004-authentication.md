@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | Accepted as the target; the MVP implements the same behaviour on today's backend |
+| Status | Accepted as the target; the MVP implements the same behaviour on today's backend. **Partly superseded by ADR 0009** for Shazlo-One admin and vendor identity; customer auth is unchanged |
 | Date | 2026-10-19 |
 | Related | `03-system-architecture.md` sections 6 and 7, `05-api-design.md` section 2 |
 
