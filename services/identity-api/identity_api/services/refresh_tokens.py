@@ -104,6 +104,11 @@ class RefreshTokenStore:
         session = await self._issue(family_id, family_expires, now)
         return Rotation(uuid.UUID(fields["admin_id"]), session)
 
+    async def family_id_of(self, token: str) -> str | None:
+        """The family a token belongs to, or None if it is unknown or expired (for rate limits)."""
+        family_id = await self._redis.hget(f"rt:{hash_token(token)}", "family_id")
+        return None if family_id is None else _text(family_id)
+
     async def revoke_family(self, family_id: str) -> None:
         admin_id = await self._redis.hget(f"rf:{family_id}", "admin_id")
         async with self._redis.pipeline(transaction=True) as pipe:

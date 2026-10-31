@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 
 from identity_api import __version__
 from identity_api.api import admins, auth, health, jwks, me
+from identity_api.core.client_ip import parse_networks
 from identity_api.core.errors import register_exception_handlers
 from identity_api.core.logging import configure_logging
 from identity_api.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
@@ -16,6 +17,7 @@ from identity_api.services.admins import AdminService
 from identity_api.services.auth import AuthService
 from identity_api.services.keys import load_keyring
 from identity_api.services.passwords import PasswordService
+from identity_api.services.rate_limit import RateLimitGuard, RedisRateLimiter
 from identity_api.services.refresh_tokens import RefreshTokenStore
 from identity_api.services.tokens import TokenIssuer, TokenVerifier
 
@@ -59,6 +61,8 @@ def create_app(
     refresh_tokens = RefreshTokenStore(app.state.redis, settings)
     app.state.auth = AuthService(settings, passwords, app.state.token_issuer, refresh_tokens)
     app.state.admins = AdminService(settings, passwords, refresh_tokens)
+    app.state.rate_limits = RateLimitGuard(RedisRateLimiter(app.state.redis), settings)
+    app.state.trusted_proxies = parse_networks(settings.trusted_proxies)
     app.state.readiness_checks = (
         readiness_checks
         if readiness_checks is not None

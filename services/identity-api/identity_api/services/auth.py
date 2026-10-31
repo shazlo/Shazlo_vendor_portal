@@ -68,6 +68,9 @@ class AuthService:
             raise INVALID_REFRESH_TOKEN
         return AuthSession(admin, self._access_token(admin), rotation.session)
 
+    async def family_of(self, token: str) -> str | None:
+        return await self._refresh_tokens.family_id_of(token)
+
     async def logout(self, token: str) -> None:
         await self._refresh_tokens.revoke_by_token(token)
 

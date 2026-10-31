@@ -49,6 +49,13 @@ Read from the environment (and `.env`). Names are the upper-case field names. Fu
 | `JWT_SIGNING_KID` | the only key, if there is just one | which key signs; the others are published in the JWKS only |
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | |
 | `REFRESH_TOKEN_TTL_DAYS` / `REFRESH_FAMILY_MAX_DAYS` | `7` / `30` | |
+| `RATE_LIMIT_LOGIN_IP` / `RATE_LIMIT_LOGIN_EMAIL` | `20/60` / `5/900` | `<limit>/<window seconds>`; see Rate limiting |
+| `RATE_LIMIT_REFRESH_IP` / `RATE_LIMIT_REFRESH_SESSION` | `60/60` / `20/60` | |
+| `RATE_LIMIT_TOKEN_IP` / `RATE_LIMIT_TOKEN_ADMIN` | `120/60` / `60/60` | |
+| `RATE_LIMIT_CHANGE_PASSWORD_ADMIN` | `5/900` | |
+| `RATE_LIMIT_FAIL_CLOSED` | `login,change_password` | endpoints that answer 503 when Redis is down; the others skip the limit |
+| `RATE_LIMIT_HMAC_KEY` | random per process (required in `prod`) | keys the hashes of emails and IPs in Redis; every instance must share it |
+| `TRUSTED_PROXIES` | none | CIDRs of the reverse proxies whose `X-Forwarded-For` is believed, comma separated |
 
 ## Database
 
@@ -100,7 +107,23 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 - **Audiences:** `AUDIENCE_ROLES` (JSON in the environment) maps each service name to the roles allowed to get a token for it, and must include `identity-api`. Adding a service is a settings change only. Roles are read from the database at exchange time, and a token for another audience is rejected by identity-api's own `current_admin` dependency.
 - `api/deps.py` has the dependencies later endpoints use: `current_admin` (active admin, password already changed) and `current_admin_pending_password`.
 - Concurrent refreshes with the same token (two tabs at once) count as reuse and end the session; the shell must refresh from one place (ADR 0009).
-- Rate limiting is a separate issue (#53).
+
+## Rate limiting
+
+Fixed-window counters in Redis (`rl:<endpoint>:<scope>:<hash>`), so the limits hold across instances. The limiter is a small interface (`services/rate_limit.py`), so the store can change. Over a limit the answer is `429 rate_limited` with `Retry-After` (seconds until the window resets, taken from the key's TTL). A fixed window lets a burst of up to twice the limit pass across a window boundary, which is fine for brute-force protection.
+
+| Endpoint | Limited by |
+|---|---|
+| `POST /v1/auth/login` | client IP, and the email (trimmed, lower-cased) |
+| `POST /v1/auth/refresh` | client IP, and the refresh family (when the cookie is valid) |
+| `POST /v1/auth/token` | client IP, and the admin |
+| `POST /v1/auth/change-password` | the admin |
+
+- **Login email counter:** counted before the password is checked, so parallel guesses cannot slip past, and cleared by a successful login. In effect it limits failed attempts for one email, from any IP. Unknown emails are counted the same way, so the response does not reveal whether an email exists.
+- **A rate-limited refresh keeps its cookie:** the limit says nothing about the token.
+- **No plain subjects in Redis:** emails, IPs, admin IDs and families are hashed with HMAC-SHA256 under `RATE_LIMIT_HMAC_KEY`. The key matters because emails are guessable: a plain hash could be reversed from a Redis dump.
+- **Client IP:** the TCP peer, unless it is in `TRUSTED_PROXIES`. Then `X-Forwarded-For` is read from the right and the first address that is not a trusted proxy is the client; what the client wrote further left is ignored. Without `TRUSTED_PROXIES` the header is never read. Behind a load balancer, list its network, or every client shares one IP and one limit.
+- **Redis down:** endpoints in `RATE_LIMIT_FAIL_CLOSED` (default `login` and `change_password`: password guessing must stay limited) answer `503 rate_limiter_unavailable`. The others (`refresh`, `token`) skip the limit and log a warning, so signed-in admins keep working. Refresh and login need Redis for sessions anyway; token exchange does not.
 
 ## Behaviour worth knowing
 

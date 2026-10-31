@@ -1,8 +1,40 @@
+import ipaddress
+import secrets
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import SecretStr, field_validator
+from pydantic import BaseModel, BeforeValidator, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+RATE_LIMITED_ENDPOINTS = frozenset({"login", "refresh", "token", "change_password"})
+
+
+class RateRule(BaseModel, frozen=True):
+    """At most `limit` hits per `window_seconds`."""
+
+    limit: int
+    window_seconds: int
+
+    @field_validator("limit", "window_seconds")
+    @classmethod
+    def _positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be at least 1")
+        return value
+
+
+def _parse_rule(value: object) -> object:
+    """Accepts `"<limit>/<window seconds>"` (e.g. `5/900`) so environment values stay short."""
+    if isinstance(value, str):
+        limit, separator, window = value.partition("/")
+        if not separator:
+            raise ValueError('use "<limit>/<window seconds>", e.g. "5/900"')
+        return {"limit": limit.strip(), "window_seconds": window.strip()}
+    return value
+
+
+# NoDecode: the environment value is "5/900", not JSON.
+Rule = Annotated[RateRule, BeforeValidator(_parse_rule), NoDecode]
 
 
 class Settings(BaseSettings):
@@ -53,12 +85,64 @@ class Settings(BaseSettings):
 
     password_min_length: int = 12
 
+    # Rate limits (ADR 0009), as "<limit>/<window seconds>". Each endpoint has a limit per
+    # client IP and one per subject: the email (hashed) for login, the refresh family for
+    # refresh, the admin for token exchange and change-password.
+    rate_limit_login_ip: Rule = RateRule(limit=20, window_seconds=60)
+    rate_limit_login_email: Rule = RateRule(limit=5, window_seconds=900)
+    rate_limit_refresh_ip: Rule = RateRule(limit=60, window_seconds=60)
+    rate_limit_refresh_session: Rule = RateRule(limit=20, window_seconds=60)
+    rate_limit_token_ip: Rule = RateRule(limit=120, window_seconds=60)
+    rate_limit_token_admin: Rule = RateRule(limit=60, window_seconds=60)
+    rate_limit_change_password_admin: Rule = RateRule(limit=5, window_seconds=900)
+    # What happens when Redis is down. Endpoints listed here answer 503 (fail closed: password
+    # guessing must stay limited); the others skip the limit (fail open: availability first).
+    rate_limit_fail_closed: Annotated[list[str], NoDecode] = ["login", "change_password"]
+    # Keys the hashes that name subjects in Redis, so a Redis dump does not reveal emails.
+    # Every instance must share it. Required in prod; elsewhere a random key per process.
+    rate_limit_hmac_key: SecretStr | None = None
+    # Networks of the reverse proxies whose X-Forwarded-For header is believed (CIDR, comma
+    # separated). Empty: the header is ignored and the TCP peer is the client.
+    trusted_proxies: Annotated[list[str], NoDecode] = []
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("rate_limit_fail_closed", "trusted_proxies", mode="before")
+    @classmethod
+    def _split_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("rate_limit_fail_closed")
+    @classmethod
+    def _check_fail_closed(cls, value: list[str]) -> list[str]:
+        unknown = set(value) - RATE_LIMITED_ENDPOINTS
+        if unknown:
+            raise ValueError(
+                f"unknown endpoint(s) {sorted(unknown)}; use {sorted(RATE_LIMITED_ENDPOINTS)}"
+            )
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _check_trusted_proxies(cls, value: list[str]) -> list[str]:
+        for network in value:
+            ipaddress.ip_network(network)  # raises ValueError on a bad CIDR
+        return value
+
+    @model_validator(mode="after")
+    def _rate_limit_key(self) -> Self:
+        if self.rate_limit_hmac_key is None:
+            if self.env == "prod":
+                raise ValueError("RATE_LIMIT_HMAC_KEY is required in prod")
+            self.rate_limit_hmac_key = SecretStr(secrets.token_hex(32))
+        return self
 
     @field_validator("audience_roles")
     @classmethod
