@@ -4,6 +4,7 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
+from shazlo_auth.fastapi import AuthenticatedAdmin
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from identity_api.api.auth import no_store
@@ -28,7 +29,7 @@ def get_admin_service(request: Request) -> AdminService:
 
 
 Service = Annotated[AdminService, Depends(get_admin_service)]
-Actor = Annotated[Admin, Depends(super_admin)]
+Actor = Annotated[AuthenticatedAdmin, Depends(super_admin)]
 
 
 class AdminOut(BaseModel):
@@ -155,7 +156,7 @@ async def update_admin(
     admin = await service.update_admin(
         db,
         admin_id,
-        actor=actor,
+        actor_id=actor.id,
         display_name=body.display_name,
         roles=body.roles,
         is_active=body.is_active,

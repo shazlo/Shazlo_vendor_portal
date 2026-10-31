@@ -125,7 +125,7 @@ class AdminService:
         db: AsyncSession,
         admin_id: uuid.UUID,
         *,
-        actor: Admin,
+        actor_id: uuid.UUID,
         display_name: str | None = None,
         roles: list[str] | None = None,
         is_active: bool | None = None,
@@ -138,7 +138,7 @@ class AdminService:
         # The lock may have waited for another change: decide on the rows as they are now.
         await db.refresh(admin)
         deactivating = is_active is False and admin.is_active
-        if deactivating and admin.id == actor.id:
+        if deactivating and admin.id == actor_id:
             raise CANNOT_DEACTIVATE_SELF
         loses_super_admin = role_rows is not None and SUPER_ADMIN not in {
             role.name for role in role_rows

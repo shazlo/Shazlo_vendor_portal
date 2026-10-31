@@ -9,6 +9,7 @@ Status: scaffold. The app factory, settings, logging, error handling and health 
 ```sh
 cd services/identity-api
 python -m venv .venv && . .venv/bin/activate
+pip install -e '../../packages/py-auth[fastapi]' --config-settings editable_mode=compat   # shared package first
 pip install -e '.[dev]'
 cp .env.example .env      # then fill in DATABASE_URL and REDIS_URL
 uvicorn identity_api.main:app --reload --port 8001
@@ -105,7 +106,7 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 - **Refresh tokens** are 256-bit random values. They exist only in the `HttpOnly` cookie (`Secure` and `SameSite` from settings, path `/v1/auth`); never in a body or a log. Redis holds only their SHA-256 hash (`rt:<hash>`) plus the family (`rf:<id>`, hard limit 30 days) and the admin's family set (`ra:<admin>`). A token lives 7 days and never outlives its family.
 - **First login:** an admin with `must_change_password` gets an access token with **no roles** and a `must_change_password` claim. Services grant it nothing, and identity-api's own `current_admin` dependency answers `403 password_change_required`. Only `change-password` accepts it. The new token returned by `change-password` is a normal one.
 - **Audiences:** `AUDIENCE_ROLES` (JSON in the environment) maps each service name to the roles allowed to get a token for it, and must include `identity-api`. Adding a service is a settings change only. Roles are read from the database at exchange time, and a token for another audience is rejected by identity-api's own `current_admin` dependency.
-- `api/deps.py` has the dependencies later endpoints use: `current_admin` (active admin, password already changed) and `current_admin_pending_password`.
+- `api/deps.py` has the dependencies later endpoints use: `current_admin` (active admin, password already changed), `current_admin_pending_password` and `require_role(...)`. Tokens are verified by `packages/py-auth` (`shazlo-auth`), the same verifier other services use, here fed with this service's own keys. `require_role` is the shared one (`super_admin` always passes) but reads roles from the database, so a role change applies to this API at once.
 - Concurrent refreshes with the same token (two tabs at once) count as reuse and end the session; the shell must refresh from one place (ADR 0009).
 
 ## Rate limiting
@@ -149,7 +150,9 @@ The suite drops and recreates the schema (`alembic downgrade base` then `upgrade
 ## Docker
 
 ```sh
-docker build -t identity-api services/identity-api
+docker build -f services/identity-api/Dockerfile -t identity-api .
 ```
+
+Run it from the repository root: the build context must include `packages/py-auth`.
 
 Runs as a non-root user on port 8001 and has a healthcheck on `/health`.

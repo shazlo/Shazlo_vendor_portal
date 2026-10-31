@@ -12,6 +12,8 @@ dependencies = [
     "alembic>=1.14",
     "argon2-cffi>=23.1",
     "pyjwt[crypto]>=2.10",
+    # packages/py-auth, installed from the path first: `pip install -e ../../packages/py-auth`.
+    "shazlo-auth[fastapi]>=0.1",
     # Sync driver for Alembic; the app itself uses asyncpg.
     "psycopg[binary]>=3.2",
 ]

@@ -3,15 +3,17 @@ from typing import Annotated, cast
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from shazlo_auth import InvalidTokenError, TokenVerifier
+from shazlo_auth.fastapi import AuthenticatedAdmin
+from shazlo_auth.fastapi import require_role as shared_require_role
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from identity_api.core.client_ip import Network, client_ip
 from identity_api.core.errors import ApiError
 from identity_api.db.models import Admin
 from identity_api.db.session import get_session
-from identity_api.services.auth import SELF_AUDIENCE, AuthService
+from identity_api.services.auth import AuthService
 from identity_api.services.rate_limit import RateLimitGuard
-from identity_api.services.tokens import InvalidTokenError, TokenVerifier
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -45,7 +47,7 @@ def _admin_dependency(*, allow_password_change: bool) -> Callable[..., Awaitable
             raise UNAUTHORIZED
         verifier = cast(TokenVerifier, request.app.state.token_verifier)
         try:
-            claims = verifier.verify(credentials.credentials, SELF_AUDIENCE)
+            claims = await verifier.verify(credentials.credentials)
         except InvalidTokenError as error:
             raise UNAUTHORIZED from error
         admin = await db.get(Admin, claims.subject)
@@ -67,19 +69,14 @@ current_admin = _admin_dependency(allow_password_change=False)
 current_admin_pending_password = _admin_dependency(allow_password_change=True)
 
 
-FORBIDDEN = ApiError(403, "forbidden", "Your roles do not allow this")
+async def _admin_with_current_roles(
+    admin: Annotated[Admin, Depends(current_admin)],
+) -> AuthenticatedAdmin:
+    """The admin with the roles in the database, not the ones in the token, so that a role
+    change applies to this API at once instead of when the token expires."""
+    return AuthenticatedAdmin(admin.id, frozenset(role.name for role in admin.roles))
 
 
-def require_role(role: str) -> Callable[..., Awaitable[Admin]]:
-    """The signed-in admin, who must hold `role`. Roles come from the database, so a change
-    applies at once here even though tokens carry the old roles for up to 15 minutes.
-
-    Local version until packages/py-auth provides the shared one.
-    """
-
-    async def dependency(admin: Annotated[Admin, Depends(current_admin)]) -> Admin:
-        if role not in {r.name for r in admin.roles}:
-            raise FORBIDDEN
-        return admin
-
-    return dependency
+def require_role(*roles: str) -> Callable[..., Awaitable[AuthenticatedAdmin]]:
+    """The shared `require_role` (`super_admin` always passes), fed with database roles."""
+    return shared_require_role(*roles, source=_admin_with_current_roles)

@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "services/**"
+      - "packages/py-auth/**"
       - ".github/workflows/services-ci.yml"
   push:
     branches: [main]
     paths:
       - "services/**"
+      - "packages/py-auth/**"
       - ".github/workflows/services-ci.yml"
 
 concurrency:
@@ -26,10 +28,16 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@v3
         with:
-          # A change to shared config or this workflow runs every service.
+          # A change to shared config or this workflow runs every service. A service that uses
+          # packages/py-auth lists it here, so changing the package runs that service too.
           filters: |
+            py-auth:
+              - "packages/py-auth/**"
+              - "services/ruff.toml"
+              - ".github/workflows/services-ci.yml"
             identity-api:
               - "services/identity-api/**"
+              - "packages/py-auth/**"
               - "services/ruff.toml"
               - ".github/workflows/services-ci.yml"
             vendor-api:
@@ -47,7 +55,7 @@ jobs:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     defaults:
       run:
-        working-directory: services/${{ matrix.service }}
+        working-directory: ${{ matrix.service == 'py-auth' && 'packages/py-auth' || format('services/{0}', matrix.service) }}
     services:
       postgres:
         image: postgres:16
@@ -70,7 +78,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: services/${{ matrix.service }}/pyproject.toml
+          cache-dependency-path: ${{ matrix.service == 'py-auth' && 'packages/py-auth' || format('services/{0}', matrix.service) }}/pyproject.toml
+      # The shared package is a path dependency: install it first, so the service's own install
+      # finds it. `compat` editable mode keeps it visible to mypy.
+      - if: matrix.service != 'py-auth'
+        run: |
+          if grep -q shazlo-auth pyproject.toml; then
+            pip install -e '../../packages/py-auth[fastapi]' --config-settings editable_mode=compat
+          fi
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: ruff format --check .

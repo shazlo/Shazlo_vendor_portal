@@ -1,0 +1,37 @@
+[project]
+name = "shazlo-auth"
+version = "0.1.0"
+description = "Verifies identity-api access tokens (RS256, JWKS) and guards FastAPI routes by role"
+requires-python = ">=3.12"
+dependencies = [
+    "pyjwt[crypto]>=2.10",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+# The FastAPI dependencies; the verifier and JWKS client work without it.
+fastapi = ["fastapi>=0.115"]
+dev = ["ruff", "mypy", "pytest", "pytest-asyncio>=0.24", "fastapi>=0.115"]
+
+[tool.setuptools.packages.find]
+include = ["shazlo_auth*"]
+
+[tool.setuptools.package-data]
+shazlo_auth = ["py.typed"]
+
+[tool.ruff]
+extend = "../../services/ruff.toml"
+
+[tool.ruff.lint.per-file-ignores]
+# The shared config's test ignores are relative to services/, so repeat them here.
+# B008: FastAPI's `Depends(...)` defaults. S505: a deliberately small key.
+"tests/**" = ["S101", "S105", "S106", "S505", "B008"]
+
+[tool.mypy]
+strict = true
+files = ["shazlo_auth", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
