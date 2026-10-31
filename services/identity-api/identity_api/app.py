@@ -6,12 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
 from identity_api import __version__
-from identity_api.api import auth, health, jwks, me
+from identity_api.api import admins, auth, health, jwks, me
 from identity_api.core.errors import register_exception_handlers
 from identity_api.core.logging import configure_logging
 from identity_api.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from identity_api.core.settings import Settings, get_settings
 from identity_api.db.session import create_engine, create_sessionmaker
+from identity_api.services.admins import AdminService
 from identity_api.services.auth import AuthService
 from identity_api.services.keys import load_keyring
 from identity_api.services.passwords import PasswordService
@@ -54,12 +55,10 @@ def create_app(
     app.state.token_verifier = TokenVerifier(settings, app.state.keyring)
     # Like the engine, the Redis client connects lazily.
     app.state.redis = redis or Redis.from_url(settings.redis_url)
-    app.state.auth = AuthService(
-        settings,
-        PasswordService(settings),
-        app.state.token_issuer,
-        RefreshTokenStore(app.state.redis, settings),
-    )
+    passwords = PasswordService(settings)
+    refresh_tokens = RefreshTokenStore(app.state.redis, settings)
+    app.state.auth = AuthService(settings, passwords, app.state.token_issuer, refresh_tokens)
+    app.state.admins = AdminService(settings, passwords, refresh_tokens)
     app.state.readiness_checks = (
         readiness_checks
         if readiness_checks is not None
@@ -83,5 +82,6 @@ def create_app(
     v1 = APIRouter(prefix="/v1")
     v1.include_router(auth.router)
     v1.include_router(me.router)
+    v1.include_router(admins.router)
     app.include_router(v1)  # feature routers are added here
     return app

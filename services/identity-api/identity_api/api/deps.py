@@ -55,3 +55,21 @@ def _admin_dependency(*, allow_password_change: bool) -> Callable[..., Awaitable
 current_admin = _admin_dependency(allow_password_change=False)
 # Same, but also accepts an admin who still has to change their password (change-password only).
 current_admin_pending_password = _admin_dependency(allow_password_change=True)
+
+
+FORBIDDEN = ApiError(403, "forbidden", "Your roles do not allow this")
+
+
+def require_role(role: str) -> Callable[..., Awaitable[Admin]]:
+    """The signed-in admin, who must hold `role`. Roles come from the database, so a change
+    applies at once here even though tokens carry the old roles for up to 15 minutes.
+
+    Local version until packages/py-auth provides the shared one.
+    """
+
+    async def dependency(admin: Annotated[Admin, Depends(current_admin)]) -> Admin:
+        if role not in {r.name for r in admin.roles}:
+            raise FORBIDDEN
+        return admin
+
+    return dependency

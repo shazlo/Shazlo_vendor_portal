@@ -87,6 +87,12 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 | `POST /v1/auth/logout` | Revokes the cookie's family and clears the cookie. Always `204`. |
 | `POST /v1/auth/token` | Bearer identity-api token plus `{"audience": "<service>"}`. Returns a 15-minute token for that one service (`{access_token, token_type, expires_in, audience}`), no refresh token. `400 unknown_audience` if the service is not in `AUDIENCE_ROLES`, `403 audience_not_allowed` if none of the admin's roles is listed for it. |
 | `GET /v1/me` | The signed-in admin: id, email, display name, roles, `must_change_password`. Never hashes or tokens. |
+| `GET /v1/roles` | `super_admin` only (like every endpoint below): the roles that exist, `[{name, description}]`. |
+| `GET /v1/admins` | Paged list `{items, total, limit, offset}`. Query: `limit` (1-100, default 25), `offset`, `q` (email or name contains), `role`, `is_active`. |
+| `POST /v1/admins` | `{email, display_name, password, roles}` creates an admin with `must_change_password` set. `201`, `409 email_taken` (any letter case), `422 weak_password` / `unknown_role`. |
+| `GET /v1/admins/{id}` | One admin, `404 admin_not_found` if unknown. |
+| `PATCH /v1/admins/{id}` | Any of `display_name`, `roles`, `is_active`. Deactivating ends all the admin's refresh families. Roles reach tokens when the next one is issued (within 15 minutes). `409 cannot_deactivate_self`, `409 last_super_admin` (the last active `super_admin` cannot be deactivated or lose the role). |
+| `POST /v1/admins/{id}/reset-password` | `{new_password}` sets a temporary password, sets `must_change_password` and ends all the admin's refresh families. `204`. |
 | `POST /v1/auth/change-password` | Bearer token plus `{current_password, new_password}`. Ends every refresh family of the admin and starts a new session (new cookie and token). |
 
 - **Refresh tokens** are 256-bit random values. They exist only in the `HttpOnly` cookie (`Secure` and `SameSite` from settings, path `/v1/auth`); never in a body or a log. Redis holds only their SHA-256 hash (`rt:<hash>`) plus the family (`rf:<id>`, hard limit 30 days) and the admin's family set (`ra:<admin>`). A token lives 7 days and never outlives its family.
