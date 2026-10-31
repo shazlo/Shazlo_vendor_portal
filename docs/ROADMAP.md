@@ -66,11 +66,16 @@ Each phase matches a milestone in this repo. The bullets are the proposed scope;
 - ADRs: iframe protocol, auth model, central-app publishing contract.
 
 ### Phase 1: Identity API (Shazlo-One admins)
-- FastAPI scaffold: pydantic-settings, SQLAlchemy 2 + Alembic, structured logging, `/health`.
+- FastAPI scaffold: pydantic-settings, SQLAlchemy 2 + Alembic, structured logging, `/health` and `/ready`; Redis and identity-api in docker-compose.
 - `admins` and `roles` tables. Roles are `super_admin` and `vendor_reviewer`, extensible per service.
-- Login, refresh and logout. Argon2 hashes, RS256 JWT with `roles` and `aud` claims, `/.well-known/jwks.json`.
-- Admin user management (super_admin only) and a seed script.
-- Rate limiting on auth endpoints, plus tests.
+- Argon2 hashes and a seed CLI for the first `super_admin`, who must change the password at the first login.
+- RS256 signing keys, `/.well-known/jwks.json` and a [key-rotation runbook](runbooks/jwt-key-rotation.md).
+- Login, refresh (rotating refresh tokens in Redis, reuse detection), logout and change-password.
+- Token exchange (`POST /v1/auth/token`): a 15-minute token for one service, by the roles allowed for it. `GET /v1/me`.
+- Admin user management (super_admin only): list, create, update, deactivate, reset password, `GET /v1/roles`.
+- Rate limiting on auth endpoints (Redis), with trusted-proxy handling and a per-endpoint fail-open or fail-closed choice.
+- `packages/py-auth`: the shared token verifier, JWKS client and `require_role` that every service uses.
+- End-to-end test of the whole flow against Postgres and Redis, including key rotation with a token in flight.
 
 ### Phase 2: Vendor API core
 - FastAPI scaffold using the same conventions as identity-api.

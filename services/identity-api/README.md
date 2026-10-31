@@ -1,23 +1,79 @@
 # identity-api
 
-FastAPI service for Shazlo-One admin users, roles and JWT issuing (RS256, JWKS). See [ADR 0009](../../docs/adr/0009-auth-model.md) and [Phase 1](../../docs/ROADMAP.md#phase-1-identity-api-shazlo-one-admins).
+The sign-in service for Shazlo-One admins. It stores admins and roles, signs RS256 access tokens, publishes the public keys as a JWKS, keeps admin sessions (refresh tokens) in Redis and rate limits the auth endpoints. Other services verify its tokens locally with [`packages/py-auth`](../../packages/py-auth/README.md), without calling it per request.
 
-Status: scaffold. The app factory, settings, logging, error handling and health endpoints are in place; auth endpoints come in the other Phase 1 issues.
+- Design: [ADR 0009, the auth model](../../docs/adr/0009-auth-model.md) (tokens, audiences, refresh families, roles, rotation).
+- Operations: [runbook: rotate the JWT signing key](../../docs/runbooks/jwt-key-rotation.md).
+- Scope: [Phase 1 of the roadmap](../../docs/ROADMAP.md#phase-1-identity-api-shazlo-one-admins).
 
 ## Run locally
+
+You need Python 3.12+ and Docker. All commands are copy-paste; replace the values in angle brackets.
+
+**1. Postgres and Redis**, from the repository root:
+
+```sh
+cp .env.example .env              # set POSTGRES_PASSWORD
+docker compose up -d postgres redis
+docker compose ps                 # both report "healthy"
+```
+
+The first start creates the `identity` and `identity_test` databases.
+
+**2. Install**, in `services/identity-api`:
 
 ```sh
 cd services/identity-api
 python -m venv .venv && . .venv/bin/activate
 pip install -e '../../packages/py-auth[fastapi]' --config-settings editable_mode=compat   # shared package first
 pip install -e '.[dev]'
-cp .env.example .env      # then fill in DATABASE_URL and REDIS_URL
+cp .env.example .env
+```
+
+In `.env`, put your `POSTGRES_PASSWORD` into `DATABASE_URL` (the database is `identity`). If you will call the API with curl or from Safari over plain `http`, also set `COOKIE_SECURE=false` (see Cookies and CORS below). The rest of the defaults work.
+
+**3. Key, schema, first admin**:
+
+```sh
+python -m identity_api.cli generate-key       # writes .keys/<kid>.pem (git-ignored); .env already has JWT_KEYS_DIR=.keys
+alembic upgrade head
+SEED_ADMIN_EMAIL=admin@shazlo.test SEED_ADMIN_PASSWORD='<at least 12 characters>' python -m identity_api.cli seed
+```
+
+The seed creates the roles and one `super_admin` who must change the password at the first login. It is safe to run again: an existing admin is never touched. Without the two variables it asks in the terminal.
+
+**4. Start and sign in**:
+
+```sh
 uvicorn identity_api.main:app --reload --port 8001
 ```
 
-Create a signing key once with `python -m identity_api.cli generate-key` (writes `.keys/<kid>.pem`, git-ignored) and set `JWT_KEYS_DIR=.keys`.
+```sh
+# log in: the response has "must_change_password": true and an access_token
+curl -s -c jar -b jar localhost:8001/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email": "admin@shazlo.test", "password": "<the seed password>"}'
 
-The app refuses to start if `DATABASE_URL`, `REDIS_URL` or the JWT keys are missing. OpenAPI docs are at `/docs` unless `ENV=prod`.
+# set your own password with that access_token; the response has a normal access_token
+curl -s -c jar -b jar localhost:8001/v1/auth/change-password \
+  -H "authorization: Bearer <access_token>" -H 'content-type: application/json' \
+  -d '{"current_password": "<the seed password>", "new_password": "<a new password>"}'
+
+# who am I?
+curl -s localhost:8001/v1/me -H "authorization: Bearer <the new access_token>"
+```
+
+Interactive docs: <http://localhost:8001/docs> (OpenAPI JSON at `/openapi.json`). They are served unless `ENV=prod`. In Swagger, press Authorize and paste an access token to try the other endpoints.
+
+The app refuses to start if `DATABASE_URL`, `REDIS_URL` or the JWT keys are missing.
+
+## Cookies and CORS (local development)
+
+- The **refresh token** is an `HttpOnly` cookie on `/v1/auth` and is never in a response body. The browser keeps it; JavaScript only ever holds the 15-minute access token.
+- **`COOKIE_SECURE=true`** (the default) works on `http://localhost` in Chrome and Firefox, which treat localhost as secure. Safari and curl do not, so set `COOKIE_SECURE=false` locally for them. Never in production.
+- **`SameSite=Strict`**: the shell (`http://localhost:5173`) and this API (`http://localhost:8001`) are the same site because ports do not count, so the cookie is sent. In production they share a parent domain: set `COOKIE_DOMAIN` (for example `shazlo.store`).
+- **CORS**: the shell's exact origin must be in `CORS_ALLOWED_ORIGINS` (comma separated; no wildcard, because credentials are allowed), and its requests need `credentials: "include"` so the cookie is sent to `/v1/auth/refresh` and `/v1/auth/logout`.
+- Refresh from **one place** in the shell: two tabs refreshing with the same token at once count as reuse and end the session.
 
 ## Layout
 
@@ -25,11 +81,12 @@ The app refuses to start if `DATABASE_URL`, `REDIS_URL` or the JWT keys are miss
 identity_api/
   app.py        create_app() factory (settings and readiness checks can be injected in tests)
   main.py       `app = create_app()` for uvicorn
-  api/          routers (health, JWKS; auth and admins later)
+  api/          routers: health, JWKS, auth, me, admins; deps.py (current_admin, require_role)
   core/         settings, JSON logging, request-ID middleware, error handlers
   db/           models, declarative base (constraint naming convention), async engine and sessions
   migrations/   Alembic env and versions (runs on a sync psycopg engine)
-  services/     business logic, free of HTTP concerns
+  services/     business logic, free of HTTP concerns (auth, admins, tokens, keys, refresh tokens, rate limits)
+  cli.py        `seed` and `generate-key`
 ```
 
 ## Settings
@@ -86,10 +143,14 @@ In a container: `docker compose exec identity-api alembic upgrade head`.
 - Keys are RSA 2048-bit or larger. A key that is only published (not signing) may be configured as a public PEM.
 - Rotation is a configuration change; follow [the runbook](../../docs/runbooks/jwt-key-rotation.md).
 
-## Auth endpoints
+## Endpoints
+
+The live reference is the OpenAPI document at `/docs` (dev). Every error is `{"error": {"code", "message", "request_id"}}`.
 
 | Endpoint | Notes |
 |---|---|
+| `GET /health` / `GET /ready` | Liveness; readiness (Postgres and Redis). |
+| `GET /.well-known/jwks.json` | The public keys, `Cache-Control: max-age=600`. |
 | `POST /v1/auth/login` | `{email, password}` returns `{access_token, token_type, expires_in, must_change_password, admin}` and sets the refresh cookie. Unknown email, wrong password and inactive admin all give the same `401 invalid_credentials`. |
 | `POST /v1/auth/refresh` | Reads the cookie, rotates it and returns the same body as login. A token that was already used revokes its whole family. A rejected token is answered with `401` and the cookie is cleared. |
 | `POST /v1/auth/logout` | Revokes the cookie's family and clears the cookie. Always `204`. |
@@ -139,10 +200,11 @@ Fixed-window counters in Redis (`rl:<endpoint>:<scope>:<hash>`), so the limits h
 ruff check . && ruff format --check . && mypy && pytest
 ```
 
-Database tests run against real Postgres from `DATABASE_URL` and are skipped when it is unset (CI sets it). Locally, point it at the `identity_test` database from the root docker-compose:
+Database tests run against real Postgres from `DATABASE_URL` and are skipped when it is unset (CI sets it). The end-to-end test (`tests/test_e2e_auth.py`) also needs a real Redis in `REDIS_URL`, and **empties that Redis database after each test**: use a database other than 0. Locally, with the root docker-compose running:
 
 ```sh
-DATABASE_URL=postgresql://shazlo:<password>@localhost:5432/identity_test pytest
+DATABASE_URL=postgresql://shazlo:<password>@localhost:5432/identity_test \
+REDIS_URL=redis://localhost:6379/1 pytest
 ```
 
 The suite drops and recreates the schema (`alembic downgrade base` then `upgrade head`) and refuses any database whose name does not contain `test`. Each test runs in a transaction that is rolled back, so tests share no rows.

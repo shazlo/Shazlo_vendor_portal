@@ -70,8 +70,19 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # identity-api's end-to-end test needs a real Redis. It empties database 1, never 0.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://shazlo:shazlo@localhost:5432/test
+      REDIS_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
