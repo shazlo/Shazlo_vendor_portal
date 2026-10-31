@@ -6,4 +6,5 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "S", "C4", "SIM"]
 
 [lint.per-file-ignores]
-"**/tests/**" = ["S101"]
+# Tests use throwaway passwords.
+"**/tests/**" = ["S101", "S105", "S106"]
